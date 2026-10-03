@@ -12,6 +12,8 @@ import pandas as pd
 from io import BytesIO
 from dotenv import load_dotenv
 from groq import Groq
+import smtplib
+from email.message import EmailMessage
 load_dotenv()
 
 
@@ -259,6 +261,73 @@ def analyze_document_ai(text):
             except ValueError:
                 pass
     return result
+
+def needs_lawyer_review(text):
+    """
+    Определяет, требуется ли дополнительная проверка документа юристом.
+    """
+
+    if not text:
+        return False, []
+
+    text_lower = text.lower()
+
+    markers = [
+        "отменить судебный приказ",
+        "возражения относительно",
+        "восстановить срок",
+        "поворот исполнения",
+        "обжалован",
+        "оспорен"
+    ]
+
+    found_markers = [
+        marker for marker in markers
+        if marker in text_lower
+    ]
+
+    return len(found_markers) > 0, found_markers
+
+
+def send_document_email(recipient_email, filename, analysis, text):
+    smtp_server = os.getenv("SMTP_SERVER")
+    smtp_port = int(os.getenv("SMTP_PORT", "465"))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+
+    if not smtp_server or not smtp_user or not smtp_password:
+        raise ValueError("Не настроены SMTP-параметры в .env")
+
+    msg = EmailMessage()
+
+    msg["Subject"] = f"Судебный документ требует проверки: {filename}"
+    msg["From"] = smtp_user
+    msg["To"] = recipient_email
+
+    body = f"""
+Документ требует дополнительной проверки юристом.
+
+Файл: {filename}
+Тип документа: {analysis.get("Тип документа", "Не найдено")}
+Номер дела: {analysis.get("Номер дела", "Не найдено")}
+Номер ИП: {analysis.get("Номер ИП", "Не найдено")}
+Суд: {analysis.get("Суд", "Не найдено")}
+Ответчик: {analysis.get("Ответчик", "Не найдено")}
+
+Причина проверки:
+{analysis.get("Причина проверки", "Не указана")}
+
+Извлечённый текст документа:
+
+{text}
+"""
+
+    msg.set_content(body)
+
+    with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
+        server.login(smtp_user, smtp_password)
+        server.send_message(msg)
+
 def extract_text_from_xml(file):
     file.seek(0)
 
@@ -493,59 +562,69 @@ if page == "Загрузка документов":
         st.success(f"Загружено документов: {len(uploaded_files)}")
 
     # Нажимаем анализ
-    if st.button("🔍 Начать анализ", type="primary"):
+        if st.button("🔍 Начать анализ", type="primary"):
 
-        st.session_state["results"] = []
+            st.session_state["results"] = []
 
-        for file in uploaded_files or []:
+            for file in uploaded_files or []:
 
-            if file.name.lower().endswith(".pdf"):
-                text = extract_text_from_pdf(file)
-
-                if not is_text_quality_good(text):
-                    text = extract_text_with_ocr(file)
-
-                if text.strip():
-                    try:
-                        analysis = analyze_document_ai(text)
-                    except Exception:
-                        analysis = analyze_document(text)
-                        st.warning("ИИ-модель недоступна. Выполнен локальный анализ документа.")
-
-            elif file.name.lower().endswith(".xml"):
-                text = extract_text_from_xml(file)
-
-                # XML ФССП разбираем напрямую по тегам,
-                # без отправки в Groq
-                analysis = analyze_fssp_xml(file)
-
-            elif file.name.lower().endswith((".png", ".jpg", ".jpeg")):
-                file.seek(0)
-                image = Image.open(file)
-
-                text = pytesseract.image_to_string(
-                    image,
-                    lang="rus"
-                )
-
-                if text.strip():
-                    try:
-                        analysis = analyze_document_ai(text)
-                    except Exception:
-                        analysis = analyze_document(text)
-                        st.warning("ИИ-модель недоступна. Выполнен локальный анализ изображения.")
-            else:
+                text = ""
                 analysis = None
 
-    else:
-        text = ""
-        analysis = None
-    if analysis:
-        st.session_state["results"].append({
-            "Файл": file.name,
-            "Текст": text,
-            "Анализ": analysis
-        })
+                if file.name.lower().endswith(".pdf"):
+                    text = extract_text_from_pdf(file)
+
+                    if not is_text_quality_good(text):
+                        text = extract_text_with_ocr(file)
+
+                    if text.strip():
+                        try:
+                            analysis = analyze_document_ai(text)
+                        except Exception:
+                            analysis = analyze_document(text)
+                            st.warning(
+                                "ИИ-модель недоступна. Выполнен локальный анализ документа."
+                            )
+
+                elif file.name.lower().endswith(".xml"):
+                    text = extract_text_from_xml(file)
+
+                    # XML ФССП разбираем напрямую по тегам
+                    analysis = analyze_fssp_xml(file)
+
+                elif file.name.lower().endswith((".png", ".jpg", ".jpeg")):
+                    file.seek(0)
+                    image = Image.open(file)
+
+                    text = pytesseract.image_to_string(
+                        image,
+                        lang="rus"
+                    )
+
+                    if text.strip():
+                        try:
+                            analysis = analyze_document_ai(text)
+                        except Exception:
+                            analysis = analyze_document(text)
+                            st.warning(
+                                "ИИ-модель недоступна. Выполнен локальный анализ изображения."
+                            )
+
+                if analysis:
+                    needs_review, review_reasons = needs_lawyer_review(text)
+
+                    if needs_review:
+                        analysis["Требуется проверка юристом"] = "Да"
+                        analysis["Причина проверки"] = ", ".join(review_reasons)
+                    else:
+                        analysis["Требуется проверка юристом"] = "Нет"
+                        analysis["Причина проверки"] = ""
+
+                    st.session_state["results"].append({
+                        "Файл": file.name,
+                        "Текст": text,
+                        "Анализ": analysis
+                    })
             # Добавить все результаты в реестр
     if st.session_state.get("results"):
         if st.button("➕ Добавить все в реестр"):
@@ -584,6 +663,36 @@ if page == "Загрузка документов":
             )
 
             st.subheader("Результат анализа")
+            if item["Анализ"].get("Требуется проверка юристом") == "Да":
+                st.error(
+                    "⚠️ Требуется дополнительная проверка юристом"
+                )
+
+                reasons = item["Анализ"].get("Причина проверки", "")
+                if reasons:
+                    st.caption(f"Причина: {reasons}")
+                    recipient_email = st.text_input(
+                    "Email ответственного сотрудника",
+                    key=f"email_{item['Файл']}"
+                )
+
+                if st.button(
+                    "📧 Отправить ответственному",
+                    key=f"send_{item['Файл']}"
+                ):
+                    if not recipient_email:
+                        st.warning("Укажите email получателя.")
+                    else:
+                        try:
+                            send_document_email(
+                                recipient_email,
+                                item["Файл"],
+                                item["Анализ"],
+                                item["Текст"]
+                            )
+                            st.success("Письмо успешно отправлено.")
+                        except Exception as e:
+                            st.error(f"Ошибка отправки письма: {e}")
 
             for key, value in item["Анализ"].items():
                 st.write(f"**{key}:** {value}")
