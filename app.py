@@ -568,7 +568,8 @@ if page == "Загрузка документов":
         st.success(f"Загружено документов: {len(uploaded_files)}")
 
     # Нажимаем анализ
-        if st.button("🔍 Начать анализ", type="primary"):
+    if st.button("🔍 Начать анализ", type="primary"):
+       with st.spinner("⏳ Документы загружаются и анализируются. Пожалуйста, подождите..."):
 
             st.session_state["results"] = []
 
