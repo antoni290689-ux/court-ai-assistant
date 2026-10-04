@@ -324,6 +324,29 @@ def send_document_email(recipient_email, filename, analysis, text):
 
     msg.set_content(body)
 
+    # Прикладываем исходный документ
+    file_extension = os.path.splitext(filename)[1].lower()
+
+    mime_types = {
+        ".pdf": "application/pdf",
+        ".xml": "application/xml",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+    }
+
+    maintype, subtype = mime_types.get(
+        file_extension,
+        "application/octet-stream"
+    ).split("/", 1)
+
+    msg.add_attachment(
+        file_bytes,
+        maintype=maintype,
+        subtype=subtype,
+        filename=filename
+    )
+
     with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
         server.login(smtp_user, smtp_password)
         server.send_message(msg)
@@ -520,23 +543,6 @@ def analyze_document(text):
         r"([\d\s]+[.,]\d{2})\s*(?:руб|рублей)"
     ])
 
-    # Итого
-    amounts_for_total = []
-
-    for field in ["Основной долг", "Пени", "Госпошлина"]:
-        value = result[field]
-
-        if value != "Не найдено":
-            try:
-                number = float(value.replace(" руб.", ""))
-                amounts_for_total.append(number)
-            except ValueError:
-                pass
-
-    if amounts_for_total:
-        result["Итого"] = f"{sum(amounts_for_total):.2f} руб."
-    else:
-        result["Итого"] = "Не найдено"
     print("RESULT:", result)
     return result
 st.title("⚖️ ИИ-помощник по судебным документам")
