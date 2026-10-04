@@ -7,3 +7,4 @@ groq
 python-dotenv
 pandas
 openpyxl
+openai

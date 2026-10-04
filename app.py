@@ -11,7 +11,7 @@ import sqlite3
 import pandas as pd
 from io import BytesIO
 from dotenv import load_dotenv
-from groq import Groq
+from openai import OpenAI
 import smtplib
 from email.message import EmailMessage
 load_dotenv()
@@ -163,12 +163,12 @@ def is_text_quality_good(text):
 
     return True    
 def analyze_document_ai(text):
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = os.getenv("HF_TOKEN")
 
     if not api_key:
-        raise ValueError("GROQ_API_KEY не найден")
+        raise ValueError("HF_TOKEN не найден")
 
-    client = Groq(api_key=api_key)
+    client = OpenAI(base_url="https://router.huggingface.co/v1", api_key=api_key)
 
     prompt = f"""
 Ты анализируешь судебный документ для формирования реестра.
@@ -221,7 +221,7 @@ def analyze_document_ai(text):
 """
 
     response = client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model="openai/gpt-oss-120b:fastest",
         messages=[
             {
                 "role": "user",
